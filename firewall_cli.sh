@@ -16,6 +16,64 @@ view_firewall_config() {
     uci show firewall
 }
 
+# Function to view a specific zone's details
+view_zone() {
+    echo -e "${DARK_GREEN}Viewing details for a specific zone:${NC}"
+    uci show firewall | grep '=zone'
+    read -p "Enter the zone name to view: " zone_name
+    uci show firewall.$zone_name
+}
+
+# Function to edit a zone
+edit_zone() {
+    echo -e "${LIGHT_BLUE}Editing an existing zone.${NC}"
+    uci show firewall | grep '=zone'
+    read -p "Enter the zone name to edit: " zone_name
+
+    read -p "Edit input policy (ACCEPT, REJECT, DROP) [leave empty to skip]: " input_policy
+    read -p "Edit output policy (ACCEPT, REJECT, DROP) [leave empty to skip]: " output_policy
+    read -p "Edit forward policy (ACCEPT, REJECT, DROP) [leave empty to skip]: " forward_policy
+    read -p "Enable masquerading? (1 for yes, 0 for no) [leave empty to skip]: " masquerading
+    read -p "Enable MSS clamping? (1 for yes, 0 for no) [leave empty to skip]: " mss_clamping
+    read -p "Edit covered networks (comma-separated) [leave empty to skip]: " covered_networks
+    read -p "Allow forward to destination zones (comma-separated) [leave empty to skip]: " forward_to
+    read -p "Allow forward from source zones (comma-separated) [leave empty to skip]: " forward_from
+
+    # Apply the changes only if values are entered
+    if [ ! -z "$input_policy" ]; then
+        uci set firewall.$zone_name.input="$input_policy"
+    fi
+    if [ ! -z "$output_policy" ]; then
+        uci set firewall.$zone_name.output="$output_policy"
+    fi
+    if [ ! -z "$forward_policy" ]; then
+        uci set firewall.$zone_name.forward="$forward_policy"
+    fi
+    if [ ! -z "$masquerading" ]; then
+        uci set firewall.$zone_name.masq="$masquerading"
+    fi
+    if [ ! -z "$mss_clamping" ]; then
+        uci set firewall.$zone_name.mtu_fix="$mss_clamping"
+    fi
+    if [ ! -z "$covered_networks" ]; then
+        covered_networks_list=$(echo "$covered_networks" | tr ',' ' ') # Replace commas with spaces for UCI
+        uci set firewall.$zone_name.network="$covered_networks_list"
+    fi
+    if [ ! -z "$forward_to" ]; then
+        forward_to_list=$(echo "$forward_to" | tr ',' ' ')
+        uci set firewall.$zone_name.forwarding_to="$forward_to_list"
+    fi
+    if [ ! -z "$forward_from" ]; then
+        forward_from_list=$(echo "$forward_from" | tr ',' ' ')
+        uci set firewall.$zone_name.forwarding_from="$forward_from_list"
+    fi
+
+    uci commit firewall
+    /etc/init.d/firewall reload
+
+    echo -e "${LIGHT_BLUE}Zone $zone_name has been updated.${NC}"
+}
+
 # Function to add a new Port Forward rule with zone and/or IP
 add_port_forward() {
     echo -e "${GREEN}Adding a new Port Forward rule.${NC}"
@@ -67,6 +125,9 @@ delete_port_forward() {
     echo -e "${RED}Deleting a Port Forward rule.${NC}"
     echo "Viewing existing Port Forward rules:"
     uci show firewall | grep '=redirect'
+    echo "Rule names:"
+    uci show firewall | grep '.name='
+
     read -p "Enter the section to delete (e.g. @redirect[0]): " section
 
     # Delete the Port Forward rule from /etc/config/firewall
@@ -139,6 +200,9 @@ delete_traffic_rule() {
     echo -e "${RED}Deleting a Traffic Rule.${NC}"
     echo "Viewing existing Traffic Rules:"
     uci show firewall | grep '=rule'
+    echo "Rule names:"
+    uci show firewall | grep '.name='
+
     read -p "Enter the section to delete (e.g. @rule[0]): " section
 
     # Delete the Traffic Rule from /etc/config/firewall
@@ -163,6 +227,48 @@ reorder_rule() {
     /etc/init.d/firewall reload
 
     echo -e "${ORANGE}Rule $section has been moved to position $new_position.${NC}"
+}
+
+# Function to add a new zone with various options
+add_zone() {
+    echo -e "${GREEN}Adding a new zone.${NC}"
+    read -p "Enter zone name: " zone_name
+    read -p "Enter input policy (ACCEPT, REJECT, DROP): " input_policy
+    read -p "Enter output policy (ACCEPT, REJECT, DROP): " output_policy
+    read -p "Enter forward policy (ACCEPT, REJECT, DROP): " forward_policy
+    read -p "Enable masquerading? (1 for yes, 0 for no): " masquerading
+    read -p "Enable MSS clamping? (1 for yes, 0 for no): " mss_clamping
+    read -p "Enter covered networks (comma-separated): " covered_networks
+    read -p "Allow forward to destination zones (comma-separated, leave empty if not needed): " forward_to
+    read -p "Allow forward from source zones (comma-separated, leave empty if not needed): " forward_from
+
+    # Add new zone in /etc/config/firewall
+    uci add firewall zone
+    uci set firewall.@zone[-1].name="$zone_name"
+    uci set firewall.@zone[-1].input="$input_policy"
+    uci set firewall.@zone[-1].output="$output_policy"
+    uci set firewall.@zone[-1].forward="$forward_policy"
+    uci set firewall.@zone[-1].masq="$masquerading"
+    uci set firewall.@zone[-1].mtu_fix="$mss_clamping"
+
+    # Set covered networks
+    covered_networks_list=$(echo "$covered_networks" | tr ',' ' ') # Replace commas with spaces for UCI
+    uci set firewall.@zone[-1].network="$covered_networks_list"
+
+    # Set forward options if provided
+    if [ ! -z "$forward_to" ]; then
+        forward_to_list=$(echo "$forward_to" | tr ',' ' ')
+        uci set firewall.@zone[-1].forwarding_to="$forward_to_list"
+    fi
+    if [ ! -z "$forward_from" ]; then
+        forward_from_list=$(echo "$forward_from" | tr ',' ' ')
+        uci set firewall.@zone[-1].forwarding_from="$forward_from_list"
+    fi
+
+    uci commit firewall
+    /etc/init.d/firewall reload
+
+    echo -e "${GREEN}Zone $zone_name added.${NC}"
 }
 
 # Function to view existing Port Forward rules with names
@@ -221,8 +327,11 @@ while true; do
     echo -e "${DARK_GREEN}8) View NAT rules${NC}"
     echo -e "${DARK_GREEN}9) View zones${NC}"
     echo -e "${ORANGE}10) Reorder rules${NC}"
-    echo -e "${DARK_BLUE}11) Reset firewall${NC}"
-    echo -e "${GRAY}12) Exit${NC}"
+    echo -e "${GREEN}11) Add zone${NC}"
+    echo -e "${DARK_GREEN}12) View zone details${NC}"
+    echo -e "${LIGHT_BLUE}13) Edit zone${NC}"
+    echo -e "${DARK_BLUE}14) Reset firewall${NC}"
+    echo -e "${GRAY}15) Exit${NC}"
     echo -e "${LIGHT_BLUE}----------------------------------------${NC}"
     read -p "Select an option: " choice
 
@@ -258,9 +367,18 @@ while true; do
             reorder_rule
             ;;
         11)
-            reset_firewall
+            add_zone
             ;;
         12)
+            view_zone
+            ;;
+        13)
+            edit_zone
+            ;;
+        14)
+            reset_firewall
+            ;;
+        15)
             echo -e "${GRAY}Exiting...${NC}"
             break
             ;;
